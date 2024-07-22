@@ -7,6 +7,7 @@ load_dotenv()
 
 open_ai_key = os.getenv("OPEN_AI_KEY")
 
+
 client = openai.OpenAI(api_key=open_ai_key)
 
 completion = client.chat.completions.create(

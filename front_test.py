@@ -1,15 +1,13 @@
-import os
-
 import gradio as gr
-import openai
-from dotenv import load_dotenv
+from langchain.chains import ConversationChain
+from langchain.memory import ConversationBufferMemory
+from langchain.schema import AIMessage, HumanMessage, SystemMessage
+from langchain_community.document_loaders import TextLoader, PyPDFLoader
+from langchain_openai import ChatOpenAI
 
-# load .env file
-load_dotenv()
-
-open_ai_key = os.getenv("OPEN_AI_KEY")
-
-client = openai.OpenAI(api_key=open_ai_key)
+llm = ChatOpenAI(temperature=0, model_name="gpt-3.5-turbo")
+memory = ConversationBufferMemory()
+conversation = ConversationChain(llm=llm, memory=memory)
 
 
 # 상담봇 - 채팅 및 답변
@@ -17,14 +15,18 @@ def counselling_bot_chat(message, chat_history):
     if message == "":
         return "", chat_history
     else:
-        completion = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "당신은 헤이마트의 상담원 입니다. 마트 상품과 관련되지 않은 질문에는 정중히 거절하세요."},
-                {"role": "user", "content": message},
+        result_message = ""
+        if len(chat_history) <= 1:
+            messages = [
+                SystemMessage(content="당신은 헤이마트의 상담원 입니다. 마트 상품과 관련되지 않은 질문에는 정중히 거절하세요."),
+                AIMessage(content="안녕하세요, 헤이마트입니다. 상담을 도와드리겠습니다."),
+                HumanMessage(content=message)
             ]
-        )
-        chat_history.append([message, completion.choices[0].message.content])
+            result_message = conversation.predict(input=messages)
+        else:
+            result_message = conversation.predict(input=message)
+
+        chat_history.append([message, result_message])
         return "", chat_history
 
 
@@ -54,28 +56,35 @@ def translate_bot(output_conditions, output_language, input_text):
             output_language, output_conditions)
 
         print(system_content)
-        completion = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system",
-                 "content": system_content},
-                {"role": "user", "content": input_text},
-            ]
-        )
-        return completion.choices[0].message.content
+
+        completion = llm.invoke([
+            {"role": "system",
+             "content": system_content},
+            {"role": "user", "content": input_text},
+        ])
+        return completion.content
+
+
+def translate_bot_text_upload(files):
+    loader = TextLoader(files)
+    document = loader.load()
+    return document[0].page_content
+
+
+def translate_bot_pdf_upload(files):
+    loader = PyPDFLoader(files)
+    document = loader.load()
+    return document[0].page_content
 
 
 # 소설봇
 def novel_bot(model, temperature, detail):
-    completion = client.chat.completions.create(
-        model=model,
-        temperature=temperature,
-        messages=[
-            {"role": "system", "content": "당신은 소설가입니다. 요청하는 조건에 맞춰 소설을 작성해 주세요."},
-            {"role": "user", "content": detail},
-        ]
-    )
-    return completion.choices[0].message.content
+    client = ChatOpenAI(temperature=temperature, model_name=model)
+    completion = client.invoke([
+        {"role": "system", "content": "당신은 소설가입니다. 요청하는 조건에 맞춰 소설을 작성해 주세요."},
+        {"role": "user", "content": detail},
+    ])
+    return completion.content
 
 
 with gr.Blocks(theme="freddyaboulton/test-blue") as app:
@@ -162,10 +171,19 @@ with gr.Blocks(theme="freddyaboulton/test-blue") as app:
                 label="",
                 interactive=False
             )
-            # 번역봇 내용 보내기
-            tb_submit.click(fn=translate_bot, inputs=[tb_output_conditions, tb_output_language, tb_input_text],
-                            outputs=[tb_output_text])
         pass
+        with gr.Row():
+            tb_TXTupload = gr.File(label="TXT 파일 업로드")
+            tb_PDFupload = gr.File(label="PDF 파일 업로드")
+
+        # 번역봇 내용 보내기
+        tb_submit.click(fn=translate_bot, inputs=[tb_output_conditions, tb_output_language, tb_input_text],
+                        outputs=[tb_output_text])
+        # Text 파일 업로드
+        tb_TXTupload.upload(fn=translate_bot_text_upload, inputs=tb_TXTupload, outputs=tb_input_text)
+
+        # PDF 파일 업로드
+        tb_PDFupload.upload(fn=translate_bot_pdf_upload, inputs=tb_PDFupload, outputs=tb_input_text)
     with gr.Tab("소설봇"):
         # 1
         gr.Markdown(
